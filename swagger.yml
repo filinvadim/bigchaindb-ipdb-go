@@ -1,0 +1,416 @@
+swagger: "2.0"
+info:
+  title: BigchainDB
+  version: 2.2.2
+basePath: /api/v1
+schemes:
+  - http
+  - https
+consumes:
+  - application/json
+produces:
+  - application/json
+
+paths:
+  /transactions/{transaction_id}:
+    get:
+      summary: Get a transaction by ID
+      parameters:
+        - name: transaction_id
+          in: path
+          description: Transaction ID
+          required: true
+          type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: "#/definitions/Transaction"
+        "404":
+          description: Not Found
+          schema:
+            $ref: "#/definitions/Error"
+
+  /transactions:
+    get:
+      summary: Get a list of transactions
+      parameters:
+        - name: asset_id
+          in: query
+          description: Asset ID
+          required: false
+          type: string
+        - name: operation
+          in: query
+          description: Operation type (CREATE or TRANSFER)
+          required: false
+          enum: [CREATE, TRANSFER]
+          type: string
+        - name: last_tx
+          in: query
+          description: Return only the last transaction
+          required: false
+          type: boolean
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: array
+            items:
+              $ref: "#/definitions/Transaction"
+        "400":
+          description: Bad Request
+          schema:
+            $ref: "#/definitions/Error"
+    post:
+      summary: Send a transaction
+      parameters:
+        - name: mode
+          in: query
+          description: Transaction mode (async, sync, commit)
+          type: string
+          enum: [async, sync, commit]
+          default: async
+        - name: postBody
+          in: body
+          description: Transaction body
+          required: true
+          schema:
+            $ref: "#/definitions/Transaction"
+      responses:
+        "202":
+          description: Accepted
+          schema:
+            $ref: "#/definitions/Transaction"
+        "400":
+          description: Bad request
+          schema:
+            $ref: "#/definitions/Error"
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: "#/definitions/Error"
+
+  /assets:
+    get:
+      summary: Get Assets by Text Search
+      description: Retrieves assets that match a given text search
+      parameters:
+        - name: search
+          in: query
+          description: Text search string to query
+          required: true
+          type: string
+        - name: limit
+          in: query
+          description: Limit the number of returned assets
+          required: false
+          type: integer
+      responses:
+        200:
+          description: Successful response with a list of matching assets
+          schema:
+            type: array
+            items:
+              $ref: "#/definitions/Asset"
+        400:
+          description: Bad Request - The query was not executed successfully
+          schema:
+            $ref: "#/definitions/Error"
+
+  /outputs:
+    get:
+      summary: Get Transaction Outputs
+      description: Retrieves transaction outputs by public key
+      parameters:
+        - name: public_key
+          in: query
+          description: Base58 encoded public key associated with output ownership
+          required: true
+          type: string
+        - name: spent
+          in: query
+          description: Boolean value indicating if the result set should include only spent or only unspent outputs
+          required: false
+          type: boolean
+      responses:
+        200:
+          description: Successful response with a list of transaction outputs
+          schema:
+            type: array
+            items:
+              $ref: "#/definitions/Fulfills"
+        400:
+          description: Bad Request - The request wasn’t understood by the server
+          schema:
+            $ref: "#/definitions/Error"
+
+  /metadata:
+    get:
+      summary: Get Metadata Objects by Text Search
+      description: Retrieves metadata objects that match a given text search
+      parameters:
+        - name: search
+          in: query
+          description: Text search string to query
+          required: true
+          type: string
+        - name: limit
+          in: query
+          description: Limit the number of returned metadata objects
+          required: false
+          type: integer
+      responses:
+        200:
+          description: Successful response with a list of matching metadata objects
+          schema:
+            type: array
+            items:
+              $ref: "#/definitions/Metadata"
+        400:
+          description: Bad Request - The query was not executed successfully
+          schema:
+            $ref: "#/definitions/Error"
+
+  /blocks:
+    get:
+      summary: Get Blocks by Transaction ID
+      description: Retrieves a list of block IDs that contain a transaction with the specified transaction ID
+      parameters:
+        - name: transaction_id
+          in: query
+          description: Transaction ID
+          required: true
+          type: string
+      responses:
+        200:
+          description: Successful response with a list of block IDs
+          schema:
+            type: array
+            items:
+              type: integer
+        400:
+          description: Bad Request - The request wasn’t understood by the server
+          schema:
+            $ref: "#/definitions/Error"
+
+  /blocks/{block_height}:
+    get:
+      summary: Get Block by Height
+      description: Retrieves the block with the specified block height
+      parameters:
+        - name: block_height
+          in: path
+          description: Block height
+          required: true
+          type: integer
+      responses:
+        200:
+          description: Successful response with the block details
+          schema:
+            $ref: "#/definitions/Block"
+        400:
+          description: Bad Request - The request wasn’t understood by the server
+          schema:
+            $ref: "#/definitions/Error"
+        404:
+          description: Not Found - A block with that block height was not found
+          schema:
+            $ref: "#/definitions/Error"
+
+definitions:
+  RootResponse:
+    type: object
+    properties:
+      assets:
+        type: string
+        x-nullable: false
+      blocks:
+        type: string
+        x-nullable: false
+      docs:
+        type: string
+        x-nullable: false
+      metadata:
+        type: string
+        x-nullable: false
+      outputs:
+        type: string
+        x-nullable: false
+      streams:
+        type: string
+        x-nullable: false
+      transactions:
+        type: string
+        x-nullable: false
+      validators:
+        type: string
+        x-nullable: false
+
+  Error:
+    type: object
+    properties:
+      message:
+        type: string
+      status:
+        type: integer
+
+  Transaction:
+    type: object
+    properties:
+      asset:
+        $ref: "#/definitions/Asset"
+      id:
+        type: string
+        minLength: 32
+      inputs:
+        type: array
+        minItems: 1
+        items:
+          $ref: "#/definitions/TransactionInput"
+      metadata:
+        $ref: "#/definitions/Metadata"
+      operation:
+        x-nullable: false
+        type: string
+        enum: [CREATE, TRANSFER, VALIDATOR_ELECTION, CHAIN_MIGRATION_ELECTION, VOTE]
+      outputs:
+        type: array
+        items:
+          $ref: "#/definitions/TransactionOutput"
+      version:
+        x-nullable: false
+        type: string
+        enum: ['2.0']
+        default: '2.0'
+    required:
+      - id
+      - version
+      - metadata
+      - outputs
+      - operation
+      - inputs
+      - asset
+
+  Asset:
+    type: object
+    properties:
+      id:
+        type: string
+        minLength: 32
+      data:
+        type: object
+
+  TransactionInput:
+    type: object
+    properties:
+      fulfillment:
+        type: object
+      fulfills:
+        x-nullable: true
+        $ref: "#/definitions/Fulfills"
+      owners_before:
+        type: array
+        minItems: 1
+        uniqueItems: true
+        items:
+          type: string
+        x-nullable: false
+    required:
+      - fulfillment
+      - owners_before
+      - fulfills
+
+  Fulfills:
+    x-nullable: true
+    type: object
+    properties:
+      output_index:
+        type: integer
+        x-nullable: false
+      transaction_id:
+        type: string
+        x-nullable: false
+    required:
+      - output_index
+      - transaction_id
+
+  TransactionMode:
+    type: string
+    enum: [ async, sync, commit ]
+    default: async
+    x-nullable: false
+
+  TransactionOutput:
+    type: object
+    properties:
+      amount:
+        type: string
+        x-nullable: false
+      condition:
+        type: object
+        x-nullable: false
+        properties:
+          details:
+            type: object
+            x-nullable: false
+            properties:
+              public_key:
+                type: string
+                minLength: 1
+                x-nullable: false
+              type:
+                type: string
+                enum: [ed25519-sha-256]
+                default: ed25519-sha-256
+                x-nullable: false
+            required:
+              - public_key
+              - type
+          uri:
+            type: string
+            minLength: 1
+            pattern: '^ni:///sha-256;([a-zA-Z0-9_-]{0,86})[?](fpt=(ed25519|threshold)-sha-256(&)?|cost=[0-9]+(&)?|subtypes=ed25519-sha-256(&)?){2,3}$'
+            x-nullable: false
+        required:
+          - details
+          - uri
+      public_keys:
+        type: array
+        minItems: 1
+        uniqueItems: true
+        items:
+          type: string
+        x-nullable: false
+    required:
+      - amount
+      - condition
+      - public_keys
+
+  Metadata:
+    type: object
+    x-nullable: false
+
+  ValidTransactionResponse:
+    type: object
+    properties:
+      transaction_id:
+        type: string
+        x-nullable: false
+      asset_id:
+        type: string
+        x-nullable: false
+      height:
+        type: integer
+        x-nullable: false
+
+  Block:
+    type: object
+    properties:
+      transactions:
+        type: array
+        items:
+          $ref: "#/definitions/Transaction"
+        x-nullable: false
+      height:
+        type: integer

@@ -1,0 +1,6 @@
+.tendermint_data
+.mongodb_data
+.bigchaindb_data
+bin
+vendor
+.idea
