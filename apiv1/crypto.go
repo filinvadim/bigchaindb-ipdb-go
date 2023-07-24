@@ -16,7 +16,7 @@ import (
 	"golang.org/x/crypto/sha3"
 )
 
-func newURIfromKey(key ed25519.PublicKey) string {
+func NewURIfromKey(key ed25519.PublicKey) string {
 	res, err := cryptoconditions.NewEd25519Sha256(key, nil)
 	if err != nil {
 		panic(err)

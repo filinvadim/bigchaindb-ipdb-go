@@ -2,6 +2,7 @@ package apiv1
 
 import (
 	"context"
+	"crypto/ed25519"
 	"encoding/json"
 	"fmt"
 	"github.com/filinvadim/bigchaindb-go/client"
@@ -20,27 +21,44 @@ import (
 	"time"
 )
 
-const basePath = "/api/v1"
-
-type bcError string
-
-func (e bcError) Error() string {
-	return string(e)
-}
-
-const (
-	ErrNilTx      = bcError("nil transaction provided")
-	ErrNoKeyPairs = bcError("no key pairs provided")
-)
-
 type (
+	txMode string
+	txOp   string
+
 	RESTClientV1 struct {
 		ctx    context.Context
 		client *client.BigchainClient
 
 		pair *KeyPair
 	}
+
+	bcError string
+
+	Transaction      = models.Transaction
+	Block            = models.Block
+	Fulfills         = models.Fulfills
+	Asset            = models.Asset
+	Metadata         = models.Metadata
+	ValidTransaction = models.ValidTransactionResponse
 )
+
+const (
+	basePath = "/api/v1"
+
+	ErrNilTx      = bcError("nil transaction provided")
+	ErrNoKeyPairs = bcError("no key pairs provided")
+
+	ModeAsync  = txMode(models.TransactionModeAsync)
+	ModeSync   = txMode(models.TransactionModeSync)
+	ModeCommit = txMode(models.TransactionModeCommit)
+
+	OpCreate   = txOp(models.TransactionOperationCREATE)
+	OpTransfer = txOp(models.TransactionOperationTRANSFER)
+)
+
+func (e bcError) Error() string {
+	return string(e)
+}
 
 var DefaultSchemes = []string{"http"}
 
@@ -59,35 +77,29 @@ func NewRESTClientV1(ctx context.Context, host string, ownerKeyPair *KeyPair) (*
 	return &RESTClientV1{ctx, cli, ownerKeyPair}, err
 }
 
-type (
-	txMode string
-	txOp   string
-)
-
-const (
-	ModeAsync  = txMode(models.TransactionModeAsync)
-	ModeSync   = txMode(models.TransactionModeSync)
-	ModeCommit = txMode(models.TransactionModeCommit)
-
-	OpCreate   = txOp(models.TransactionOperationCREATE)
-	OpTransfer = txOp(models.TransactionOperationTRANSFER)
-)
-
 var defaultOpt = func(op *runtime.ClientOperation) {}
+
+type CreateParams struct {
+	Mode             txMode
+	Amount           float64
+	TxData, MetaData any
+}
 
 // CreateTx : all key names (e.g. anywhere in the JSON documents stored in asset.data or metadata):
 // - must not begin with $
 // - must not contain .
 // - must not contain the null character (Unicode code point U+0000)
-func (c *RESTClientV1) CreateTx(mode txMode, amount float64, txData, metaData any) (*models.Transaction, error) {
-	tx := c.prepareCreateTx(strconv.FormatFloat(amount, 'g', -1, 32), txData, metaData)
+func (c *RESTClientV1) CreateTx(params CreateParams) (*Transaction, error) {
+	tx := c.prepareCreateTx(
+		strconv.FormatFloat(params.Amount, 'g', -1, 32), params.TxData, params.MetaData,
+	)
 
 	err := SignTx(tx, []*KeyPair{c.pair})
 	if err != nil {
 		return nil, err
 	}
 	resp, err := c.client.Operations.PostTransactions(&operations.PostTransactionsParams{
-		Mode:     func(m txMode) *string { s := string(m); return &s }(mode),
+		Mode:     func(m txMode) *string { s := string(m); return &s }(params.Mode),
 		Context:  c.ctx,
 		PostBody: tx,
 	}, defaultOpt)
@@ -101,7 +113,7 @@ func (c *RESTClientV1) CreateTx(mode txMode, amount float64, txData, metaData an
 	return resp.Payload, nil
 }
 
-func (c *RESTClientV1) prepareCreateTx(amount string, td, md any) *models.Transaction {
+func (c *RESTClientV1) prepareCreateTx(amount string, td, md any) *Transaction {
 	if amount == "0" {
 		amount = "1"
 	}
@@ -121,7 +133,7 @@ func (c *RESTClientV1) prepareCreateTx(amount string, td, md any) *models.Transa
 						PublicKey: base58.Encode(c.pair.PublicKey),
 						Type:      tp,
 					},
-					URI: newURIfromKey(c.pair.PublicKey),
+					URI: NewURIfromKey(c.pair.PublicKey),
 				},
 				PublicKeys: []string{base58.Encode(c.pair.PublicKey)},
 			},
@@ -140,23 +152,37 @@ func (c *RESTClientV1) prepareCreateTx(amount string, td, md any) *models.Transa
 	return &tx
 }
 
-func (c *RESTClientV1) TransferOneToOne(
-	mode txMode,
-	amount float64,
-	destPair *KeyPair,
-	prevTx *models.Transaction,
-	metaData any,
-) (*models.Transaction, error) {
-	if prevTx.ID == nil {
+type TransferParams struct {
+	Mode     txMode
+	Amount   float64
+	From     Owner
+	To       ed25519.PublicKey
+	MetaData any
+}
+
+type Owner struct {
+	TxID string
+	Pair *KeyPair
+}
+
+func (c *RESTClientV1) TransferOneToOne(params TransferParams) (*Transaction, error) {
+	if params.From.TxID == "" {
 		return nil, ErrNilTx
 	}
-	tx := c.prepareTransferTx(strconv.FormatFloat(amount, 'g', -1, 32), prevTx, destPair, metaData)
-	err := SignTx(tx, []*KeyPair{c.pair})
+	if params.To == nil {
+		return nil, errors.New("empty destination public key")
+	}
+	tx := c.prepareTransferTx(
+		strconv.FormatFloat(params.Amount, 'g', -1, 32), params.From, params.To, params.MetaData,
+	)
+
+	err := SignTx(tx, []*KeyPair{params.From.Pair})
 	if err != nil {
 		return nil, err
 	}
+
 	resp, err := c.client.Operations.PostTransactions(&operations.PostTransactionsParams{
-		Mode:     func(m txMode) *string { s := string(m); return &s }(mode),
+		Mode:     func(m txMode) *string { s := string(m); return &s }(params.Mode),
 		Context:  c.ctx,
 		PostBody: tx,
 	}, defaultOpt)
@@ -172,17 +198,18 @@ func (c *RESTClientV1) TransferOneToOne(
 
 func (c *RESTClientV1) prepareTransferTx(
 	amount string,
-	prevTx *models.Transaction,
-	destPair *KeyPair,
+	owner Owner,
+	dest ed25519.PublicKey,
 	md any,
-) *models.Transaction {
+) *Transaction {
 	if amount == "0" {
 		amount = "1"
 	}
+
 	tp := models.TransactionOutputConditionDetailsTypeEd25519DashShaDash256
 	tx := models.Transaction{
 		Asset: &models.Asset{
-			ID: *prevTx.ID,
+			ID: owner.TxID,
 		},
 
 		Metadata:  md,
@@ -192,12 +219,12 @@ func (c *RESTClientV1) prepareTransferTx(
 				Amount: amount,
 				Condition: models.TransactionOutputCondition{
 					Details: models.TransactionOutputConditionDetails{
-						PublicKey: base58.Encode(destPair.PublicKey),
+						PublicKey: base58.Encode(dest),
 						Type:      tp,
 					},
-					URI: newURIfromKey(destPair.PublicKey),
+					URI: NewURIfromKey(dest),
 				},
-				PublicKeys: []string{base58.Encode(destPair.PublicKey)},
+				PublicKeys: []string{base58.Encode(dest)},
 			},
 		},
 		Version: models.TransactionVersionNr2Dot0,
@@ -205,12 +232,12 @@ func (c *RESTClientV1) prepareTransferTx(
 
 	tx.Inputs = append(tx.Inputs,
 		&models.TransactionInput{
-			Fulfillment: prevTx.Outputs[0].Condition.Details,
+			Fulfillment: nil,
 			Fulfills: &models.Fulfills{
 				OutputIndex:   0,
-				TransactionID: *prevTx.ID,
+				TransactionID: owner.TxID,
 			},
-			OwnersBefore: prevTx.Outputs[0].PublicKeys,
+			OwnersBefore: []string{base58.Encode(owner.Pair.PublicKey)},
 		},
 	)
 
@@ -221,7 +248,7 @@ func (c *RESTClientV1) prepareTransferTx(
 func (c *RESTClientV1) TransferManyToMany(
 	mode txMode,
 	amount float64,
-	prevTx []*models.Transaction,
+	prevTx []*Transaction,
 	destPubKeys []string,
 	metaData any,
 ) error {
@@ -229,7 +256,7 @@ func (c *RESTClientV1) TransferManyToMany(
 	return nil
 }
 
-func (c *RESTClientV1) GetBlockHeight(blockHeight int64) (*models.Block, error) {
+func (c *RESTClientV1) GetBlockHeight(blockHeight int64) (*Block, error) {
 	resp, err := c.client.Operations.GetBlocksBlockHeight(&operations.GetBlocksBlockHeightParams{
 		BlockHeight: blockHeight,
 		Context:     c.ctx,
@@ -244,7 +271,7 @@ func (c *RESTClientV1) GetBlockHeight(blockHeight int64) (*models.Block, error) 
 	return resp.Payload, nil
 }
 
-func (c *RESTClientV1) GetTransaction(txID string) (*models.Transaction, error) {
+func (c *RESTClientV1) GetTransaction(txID string) (*Transaction, error) {
 	resp, err := c.client.Operations.GetTransactionsTransactionID(&operations.GetTransactionsTransactionIDParams{
 		TransactionID: txID,
 		Context:       c.ctx,
@@ -274,7 +301,7 @@ func (c *RESTClientV1) ListBlocks(txID string) ([]int64, error) {
 	return resp.Payload, nil
 }
 
-func (c *RESTClientV1) ListOutputs(pubKey string, spent bool) ([]*models.Fulfills, error) {
+func (c *RESTClientV1) ListOutputs(pubKey string, spent bool) ([]*Fulfills, error) {
 	resp, err := c.client.Operations.GetOutputs(&operations.GetOutputsParams{
 		PublicKey: pubKey,
 		Spent:     &spent,
@@ -290,7 +317,7 @@ func (c *RESTClientV1) ListOutputs(pubKey string, spent bool) ([]*models.Fulfill
 	return resp.Payload, nil
 }
 
-func (c *RESTClientV1) ListTransactions(assetID string, operation txOp, onlyLast bool) ([]*models.Transaction, error) {
+func (c *RESTClientV1) ListTransactions(assetID string, operation txOp, onlyLast bool) ([]*Transaction, error) {
 	resp, err := c.client.Operations.GetTransactions(&operations.GetTransactionsParams{
 		AssetID:   &assetID,
 		LastTx:    &onlyLast,
@@ -307,7 +334,7 @@ func (c *RESTClientV1) ListTransactions(assetID string, operation txOp, onlyLast
 	return resp.Payload, nil
 }
 
-func (c *RESTClientV1) SearchAsset(search string, limit int64) ([]*models.Asset, error) {
+func (c *RESTClientV1) SearchAsset(search string, limit int64) ([]*Asset, error) {
 	var reqLimit *int64
 	if limit > 0 {
 		reqLimit = &limit
@@ -326,7 +353,7 @@ func (c *RESTClientV1) SearchAsset(search string, limit int64) ([]*models.Asset,
 	return resp.Payload, nil
 }
 
-func (c *RESTClientV1) SearchMetadata(search string, limit int64) ([]models.Metadata, error) {
+func (c *RESTClientV1) SearchMetadata(search string, limit int64) ([]Metadata, error) {
 	var reqLimit *int64
 	if limit > 0 {
 		reqLimit = &limit
@@ -371,7 +398,7 @@ func NewWSClient(ctx context.Context, host string, logf func(format string, v ..
 	}, nil
 }
 
-func (ws *WSClient) SubscribeStream(stream chan models.ValidTransactionResponse) error {
+func (ws *WSClient) SubscribeStream(stream chan ValidTransaction) error {
 	if ws == nil {
 		return errors.New("not connected")
 	}
@@ -402,7 +429,7 @@ func (ws *WSClient) SubscribeStream(stream chan models.ValidTransactionResponse)
 		if ws.logf != nil {
 			ws.logf("websocket message: %s", resp)
 		}
-		var validTx models.ValidTransactionResponse
+		var validTx ValidTransaction
 		err := json.Unmarshal(resp, &validTx)
 		if err != nil {
 			if ws.logf != nil {
