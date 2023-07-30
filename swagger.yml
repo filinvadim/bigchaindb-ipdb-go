@@ -251,7 +251,7 @@ definitions:
     type: object
     properties:
       message:
-        type: string
+        type: object
       status:
         type: integer
 

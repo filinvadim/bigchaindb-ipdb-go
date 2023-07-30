@@ -43,6 +43,8 @@ type (
 )
 
 const (
+	testNet = "https://test.ipdb.io"
+
 	basePath = "/api/v1"
 
 	ErrNilTx      = bcError("nil transaction provided")

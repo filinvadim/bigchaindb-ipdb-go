@@ -18,7 +18,7 @@ import (
 type Error struct {
 
 	// message
-	Message string `json:"message,omitempty"`
+	Message interface{} `json:"message,omitempty"`
 
 	// status
 	Status int64 `json:"status,omitempty"`
